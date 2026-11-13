@@ -1,0 +1,268 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MKM HIAB Career Simulator</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#17242c;color:white;font:15px Arial}
+main{max-width:850px;margin:auto;padding:12px}
+header,.panel{background:#293b46;padding:13px;border-radius:12px;margin:10px 0}
+h1,h2{color:#f1c342;margin:5px 0}
+.small{font-size:12px;color:#c4d0d3}
+.stats,.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+.stat{background:#1e303a;padding:9px;border-radius:8px;font-size:11px}
+.stat b{display:block;color:#f1c342;font-size:18px}
+button{background:#354b57;color:white;border:1px solid #72858d;border-radius:9px;padding:12px 7px;font-weight:bold;min-height:44px}
+button:disabled{opacity:.35}
+.gold{background:#dba82c;color:#17242c;border:0}
+.jobs{display:grid;gap:7px}
+.job{text-align:left}
+.job.sel{border:2px solid #f1c342}
+canvas{width:100%;height:auto;border-radius:9px;background:#9bb9c4}
+.remote{display:flex;justify-content:space-around;gap:15px}
+.joy{width:105px;height:105px;border:3px solid #d6a43c;border-radius:50%;display:grid;place-items:center;background:#26343b;touch-action:none}
+.knob{width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#ddd,#444);border:2px solid #aaa}
+.hidden{display:none!important}
+.bar{height:8px;background:#53646b;border-radius:9px}
+.bar i{display:block;height:100%;background:#eab62d}
+</style>
+</head>
+<body>
+<main>
+<header><h1>MKM HIAB</h1><div class="small">IVECO • ATLAS LOADER CRANE • CAREER MODE</div></header>
+<div class="stats">
+<div class="stat">BALANCE<b id="cash">£2,500</b></div>
+<div class="stat">DRIVER LEVEL<b id="level">1</b></div>
+<div class="stat">REPUTATION<b id="rep">0 ★</b></div>
+</div>
+<section class="panel">
+<b id="rank">New Starter</b>
+<p class="small" id="xp">0 / 100 XP</p>
+<div class="bar"><i id="xpbar" style="width:0%"></i></div>
+</section>
+<section class="panel" id="career">
+<h2>CAREER JOB BOARD</h2>
+<div class="jobs" id="jobs"></div>
+<p class="small" id="jobinfo"></p>
+<button class="gold" id="start" style="width:100%">START JOB</button>
+</section>
+<section id="game" class="hidden">
+<section class="panel">
+<div id="mission"></div>
+<canvas id="cv" width="900" height="500"></canvas>
+<div class="stats">
+<div class="stat">BOOM ANGLE<b id="angle">35°</b></div>
+<div class="stat">EXTENSION<b id="ext">2m</b></div>
+<div class="stat">HOOK<b id="cable">115</b></div>
+</div>
+</section>
+<section class="panel">
+<h2>HANDHELD RADIO REMOTE</h2>
+<div class="remote">
+<div><div class="small">SLEW / BOOM</div><div class="joy" id="j1"><i class="knob"></i></div></div>
+<div><div class="small">EXTENSION / WINCH</div><div class="joy" id="j2"><i class="knob"></i></div></div>
+</div>
+<div class="grid" style="margin-top:10px">
+<button id="stab">DEPLOY STABILISERS</button>
+<button id="hook">ATTACH / RELEASE</button>
+<button id="stop">EMERGENCY STOP</button>
+<button data-k="left">SLEW LEFT</button>
+<button data-k="right">SLEW RIGHT</button>
+<button data-k="up">BOOM UP</button>
+<button data-k="down">BOOM DOWN</button>
+<button data-k="extend">EXTEND</button>
+<button data-k="retract">RETRACT</button>
+<button data-k="raise">HOOK UP</button>
+<button data-k="lower">HOOK DOWN</button>
+<button id="finish" disabled>COMPLETE DELIVERY</button>
+</div>
+<p class="small" id="hint">Deploy stabilisers, lower hook to pallet, attach, then place it in the green delivery zone.</p>
+<button id="quit" style="width:100%">ABANDON JOB</button>
+</section>
+</section>
+<section class="panel hidden" id="result">
+<h2>DELIVERY COMPLETE!</h2>
+<p id="resulttext"></p>
+<button class="gold" id="back" style="width:100%">RETURN TO CAREER</button>
+</section>
+<p class="small">Career progress saves on this device. Game simulation only — not real lifting or vehicle training.</p>
+</main>
+<script>
+(()=>{
+const $=id=>document.getElementById(id);
+const jobs=[
+["Timber delivery","Local building site",350,50,750],
+["Brick pallet","Housing development",500,65,1000],
+["Roofing materials","Restricted access",750,85,1250],
+["Concrete blocks","Commercial site",1000,110,1800],
+["Steel beams","Major construction site",1500,150,2000]
+];
+let d={};try{d=JSON.parse(localStorage.mkmcareer||"{}")}catch(e){}
+let cash=d.cash??2500,xp=d.xp??0,level=d.level??1,rep=d.rep??0,done=d.done||[];
+let sel=0,active=false,st=false,held=false,del=false;
+let angle=35,ext=2,cable=115,slew=0,estop=false,joy=[[0,0],[0,0]],keys={};
+function save(){try{localStorage.mkmcareer=JSON.stringify({cash,xp,level,rep,done})}catch(e){}}
+function rank(){return ["New Starter","Experienced Driver","Senior HIAB Driver","Lead Operator","MKM Crane Specialist","Fleet Champion"][Math.min(level-1,5)]}
+function board(){
+$("cash").textContent="£"+cash.toLocaleString();
+$("level").textContent=level;$("rep").textContent=rep+" ★";
+$("rank").textContent=rank();$("xp").textContent=xp+" / 100 XP";
+$("xpbar").style.width=xp+"%";$("jobs").innerHTML="";
+jobs.forEach((j,i)=>{
+let b=document.createElement("button");
+b.className="job"+(i===sel?" sel":"");
+b.disabled=(i>0&&level<i+1)||done.includes(i);
+b.innerHTML="<b>"+(i+1)+". "+j[0]+(done.includes(i)?" ✓":"")+"</b><div class='small'>"+j[1]+" • £"+j[2]+"</div>";
+b.onclick=()=>{sel=i;board()};$("jobs").append(b);
+});
+let j=jobs[sel];
+$("jobinfo").textContent=j[1]+" • Reward £"+j[2]+" • Load "+j[4]+" kg";
+$("start").disabled=done.includes(sel)||(sel>0&&level<sel+1);
+}
+function say(t){$("hint").textContent=t}
+function stats(){
+$("angle").textContent=Math.round(angle)+"°";
+$("ext").textContent=ext.toFixed(1)+" m";
+$("cable").textContent=Math.round(cable);
+}
+function start(){
+active=true;st=held=del=estop=false;
+angle=35;ext=2;cable=115;slew=0;
+$("career").classList.add("hidden");
+$("result").classList.add("hidden");
+$("game").classList.remove("hidden");
+$("mission").textContent="JOB "+(sel+1)+" • "+jobs[sel][0].toUpperCase();
+$("stab").textContent="DEPLOY STABILISERS";
+$("hook").textContent="ATTACH / RELEASE";
+$("finish").disabled=true;draw();
+}
+$("start").onclick=start;
+$("stab").onclick=()=>{
+st=!st;
+$("stab").textContent=st?"RETRACT STABILISERS":"DEPLOY STABILISERS";
+say(st?"Stabilisers down. Lower hook to pallet.":"Stabilisers retracted.");
+};
+$("hook").onclick=()=>{
+if(!st){say("Safety interlock: deploy stabilisers first.");return}
+if(!held){
+if(cable>145){held=true;$("hook").textContent="RELEASE LOAD";say("Pallet attached. Lift and slew into the green delivery zone.")}
+else say("Lower hook further to reach pallet.");
+}else if(slew>.15&&cable<195&&ext>3){
+held=false;del=true;$("hook").textContent="LOAD RELEASED";
+$("finish").disabled=false;say("Load released in delivery zone. Complete the job.");
+}else say("Move crane towards green zone, extend beyond 3m and lower hook before releasing.");
+draw();
+};
+$("finish").onclick=()=>{
+if(!del)return;
+let j=jobs[sel];cash+=j[2];xp+=j[3];rep++;
+if(!done.includes(sel))done.push(sel);
+while(xp>=100){xp-=100;level++;cash+=250}
+save();active=false;
+$("game").classList.add("hidden");$("result").classList.remove("hidden");
+$("resulttext").textContent="£"+j[2]+" earned • "+j[3]+" XP • 1 reputation star. "+rank();
+board();
+};
+$("quit").onclick=()=>{$("game").classList.add("hidden");$("career").classList.remove("hidden");active=false};
+$("back").onclick=()=>{$("result").classList.add("hidden");$("career").classList.remove("hidden")};
+$("stop").onclick=()=>{estop=!estop;joy=[[0,0],[0,0]]};
+document.querySelectorAll("[data-k]").forEach(b=>{
+let k=b.dataset.k;
+b.onpointerdown=e=>{e.preventDefault();keys[k]=1};
+["pointerup","pointerleave","pointercancel"].forEach(ev=>b.addEventListener(ev,()=>keys[k]=0));
+});
+function bind(id,n){
+let el=$(id),kn=el.firstElementChild,on=false;
+function move(e){
+let r=el.getBoundingClientRect();
+let x=(e.clientX-r.left-r.width/2)/(r.width/2);
+let y=(e.clientY-r.top-r.height/2)/(r.height/2);
+let m=Math.hypot(x,y);if(m>1){x/=m;y/=m}
+joy[n]=[x,-y];kn.style.transform="translate("+x*27+"px,"+y*27+"px)";
+}
+function off(){on=false;joy[n]=[0,0];kn.style.transform=""}
+el.onpointerdown=e=>{on=true;el.setPointerCapture(e.pointerId);move(e)};
+el.onpointermove=e=>{if(on)move(e)};
+el.onpointerup=off;el.onpointercancel=off;
+}
+bind("j1",0);bind("j2",1);
+let c=$("cv"),g=c.getContext("2d");
+function draw(){
+g.clearRect(0,0,900,500);
+let sky=g.createLinearGradient(0,0,0,500);
+sky.addColorStop(0,"#86b4c9");sky.addColorStop(.6,"#d4d5ca");sky.addColorStop(1,"#9b896e");
+g.fillStyle=sky;g.fillRect(0,0,900,500);
+g.fillStyle="#a89577";g.fillRect(0,290,900,210);
+g.fillStyle="#647579";g.fillRect(20,150,270,140);
+g.fillStyle="#526368";g.fillRect(45,180,90,90);g.fillRect(160,170,100,100);
+g.fillStyle="rgba(30,190,78,.2)";g.fillRect(28,340,150,90);
+g.strokeStyle="#35ed70";g.lineWidth=4;g.setLineDash([12,7]);
+g.strokeRect(28,340,150,90);g.setLineDash([]);
+g.fillStyle="#155a36";g.font="bold 15px Arial";g.fillText("DELIVERY ZONE",35,333);
+g.fillStyle="#343d42";g.fillRect(120,330,680,55);
+let grad=g.createLinearGradient(0,245,0,330);
+grad.addColorStop(0,"#ffe04a");grad.addColorStop(1,"#b98512");
+g.fillStyle=grad;g.fillRect(180,250,440,80);
+g.fillStyle="#e6b91f";for(let x=200;x<615;x+=54)g.fillRect(x,253,4,72);
+function wheel(x){
+g.fillStyle="#171d20";g.beginPath();g.arc(x,385,25,0,7);g.fill();
+g.fillStyle="#aeb5b5";g.beginPath();g.arc(x,385,13,0,7);g.fill();
+}
+[210,300,550,610,755].forEach(wheel);
+g.fillStyle="#ffe04b";g.beginPath();
+g.moveTo(645,330);g.lineTo(645,245);g.lineTo(675,212);
+g.lineTo(785,212);g.lineTo(850,285);g.lineTo(850,345);g.closePath();g.fill();
+g.fillStyle="#385562";g.fillRect(675,226,125,50);
+g.fillStyle="#17477d";g.font="900 22px Arial";g.fillText("MKM",690,316);
+g.font="900 32px Arial";g.fillText("MKM",340,294);
+g.fillStyle="white";g.font="bold 10px Arial";g.fillText("BUILDING SUPPLIES",344,309);
+let bx=645,by=230,a=angle*Math.PI/180;
+let sx=bx-Math.cos(a)*ext*48,sy=by-Math.sin(a)*ext*48;
+let tx=sx-Math.cos(a-.22)*95,ty=sy-Math.sin(a-.22)*95;
+g.lineCap="round";g.strokeStyle="#11191e";g.lineWidth=28;
+g.beginPath();g.moveTo(bx,by);g.lineTo(sx,sy);g.stroke();
+g.strokeStyle="#343e44";g.lineWidth=18;g.stroke();
+g.strokeStyle="#11191e";g.lineWidth=20;
+g.beginPath();g.moveTo(sx,sy);g.lineTo(tx,ty);g.stroke();
+g.strokeStyle="#303a40";g.lineWidth=12;g.stroke();
+g.strokeStyle="#b9c2c3";g.lineWidth=4;
+g.beginPath();g.moveTo(631,240);g.lineTo(sx+20,sy+15);g.stroke();
+let hy=ty+cable*.65;g.strokeStyle="#20292e";g.lineWidth=3;
+g.beginPath();g.moveTo(tx,ty);g.lineTo(tx,hy);g.stroke();
+g.strokeStyle="#ddd";g.lineWidth=4;g.beginPath();g.arc(tx,hy+3,8,.1,4.5);g.stroke();
+if(held){g.fillStyle="#a87849";g.fillRect(tx-38,hy+15,76,34)}
+if(st){
+g.strokeStyle="#20292e";g.lineWidth=12;
+[[270,330],[700,330]].forEach(([x,y])=>{
+g.beginPath();g.moveTo(x,y);g.lineTo(x-25,435);g.stroke();
+});
+}
+g.fillStyle="rgba(15,27,34,.85)";g.fillRect(12,12,210,48);
+g.fillStyle="#f4c83e";g.font="bold 24px Arial";g.fillText("MKM HIAB",24,44);
+stats();
+}
+function tick(){
+if(active&&!estop&&st){
+let [x,y]=joy[0],[u,v]=joy[1];
+slew+=x*.008;angle=Math.max(10,Math.min(85,angle-y*.45));
+ext=Math.max(1,Math.min(10,ext+u*.04));
+cable=Math.max(35,Math.min(210,cable-v*.8));
+if(keys.left)slew-=.012;if(keys.right)slew+=.012;
+if(keys.up)angle=Math.min(85,angle+.5);
+if(keys.down)angle=Math.max(10,angle-.5);
+if(keys.extend)ext=Math.min(10,ext+.04);
+if(keys.retract)ext=Math.max(1,ext-.025);
+if(keys.raise)cable=Math.max(35,cable-1);
+if(keys.lower)cable=Math.min(210,cable+1);
+}
+if(active)draw();
+requestAnimationFrame(tick);
+}
+tick();board();
+})();
+</script>
+</body>
+</html>
